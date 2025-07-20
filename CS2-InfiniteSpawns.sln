@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CS2-InfiniteSpawns", "CS2-InfiniteSpawns.csproj", "{928DEB04-51D9-4C89-6677-C1F809676825}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{928DEB04-51D9-4C89-6677-C1F809676825}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{928DEB04-51D9-4C89-6677-C1F809676825}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{928DEB04-51D9-4C89-6677-C1F809676825}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{928DEB04-51D9-4C89-6677-C1F809676825}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {95710B9C-3848-4EE1-91E2-E907EE037B71}
+	EndGlobalSection
+EndGlobal
