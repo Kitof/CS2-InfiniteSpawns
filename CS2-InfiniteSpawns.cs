@@ -16,6 +16,7 @@ using CounterStrikeSharp.API.Modules.Entities;
 using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Utils;
 using CounterStrikeSharp.API.Modules.Memory;
+using CounterStrikeSharp.API.Modules.Timers;
 
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
@@ -29,12 +30,11 @@ namespace InfiniteSpawns;
 public class InfiniteSpawns : BasePlugin
 {
     public override string ModuleName => "CS2-InfiniteSpawns";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "1.1.0";
     public override string ModuleAuthor => "Kitof";
     public override string ModuleDescription => "Infinite spawns";
     public Random Random = new Random();
-    // Sets the correct offset data for our collision rules change in accordance with the server's operating system
-    private readonly WIN_LINUX<int> OnCollisionRulesChangedOffset = new WIN_LINUX<int>(173, 172);
+
 
     public enum JoinTeamReason
     {
@@ -264,20 +264,18 @@ public class InfiniteSpawns : BasePlugin
         return true;
     }
 
+    private readonly Dictionary<CCSPlayerController, CounterStrikeSharp.API.Modules.Timers.Timer?> _collisionTimers = new();
+
     private HookResult Event_PlayerSpawn(EventPlayerSpawn @event, GameEventInfo info)
     {
-        if (!@event.Userid.IsValid)
+        if (@event.Userid == null || !@event.Userid.IsValid)
         {
             return HookResult.Continue;
         }
+
         CCSPlayerController player = @event.Userid;
 
-        if (player.Connected != PlayerConnectedState.PlayerConnected)
-        {
-            return HookResult.Continue;
-        }
-
-        if (!player.PlayerPawn.IsValid)
+        if (player.Connected != PlayerConnectedState.Connected || !player.PlayerPawn.IsValid)
         {
             return HookResult.Continue;
         }
@@ -291,21 +289,87 @@ public class InfiniteSpawns : BasePlugin
 
     private void PlayerSpawnNextFrame(CCSPlayerController player, CHandle<CCSPlayerPawn> pawn)
     {
-        pawn.Value.Collision.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_DISSOLVING;
-        pawn.Value.Collision.CollisionAttribute.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_DISSOLVING;
-        VirtualFunctionVoid<nint> collisionRulesChanged = new VirtualFunctionVoid<nint>(pawn.Value.Handle, OnCollisionRulesChangedOffset.Get());
-        collisionRulesChanged.Invoke(pawn.Value.Handle);
+        var currentPawn = pawn.Value;
+        if (currentPawn == null || !currentPawn.IsValid)
+            return;
 
-        AddTimer(3.0f, () =>
+        // Kill any existing collision timer for this player
+        if (_collisionTimers.TryGetValue(player, out var existingTimer) && existingTimer != null)
         {
-            Server.PrintToConsole("End of timer");
+            existingTimer.Kill();
+            _collisionTimers.Remove(player);
+        }
 
-            pawn.Value.Collision.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_PLAYER;
-            pawn.Value.Collision.CollisionAttribute.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_PLAYER;
-            VirtualFunctionVoid<nint> collisionRulesChanged = new VirtualFunctionVoid<nint>(pawn.Value.Handle, OnCollisionRulesChangedOffset.Get());
-            collisionRulesChanged.Invoke(pawn.Value.Handle);
-        });
+        currentPawn.Collision.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_DISSOLVING;
+        currentPawn.Collision.CollisionAttribute.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_DISSOLVING;
+        Utilities.SetStateChanged(currentPawn, "CCollisionProperty", "m_collisionAttribute");
 
+        // Start the distance-check sequence
+        StartCollisionCheckSequence(player, pawn);
+    }
+
+    private void StartCollisionCheckSequence(CCSPlayerController player, CHandle<CCSPlayerPawn> pawn)
+    {
+        var timer = AddTimer(1.0f, () =>
+        {
+            var currentPawn = pawn.Value;
+            if (currentPawn == null || !currentPawn.IsValid || currentPawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+            {
+                // Player dead/disconnected/invalid - stop sequence
+                if (_collisionTimers.TryGetValue(player, out var t) && t != null)
+                {
+                    t.Kill();
+                    _collisionTimers.Remove(player);
+                }
+                return;
+            }
+
+            // Check distance to all other valid players
+            bool canRestore = true;
+            foreach (var other in Utilities.GetPlayers())
+            {
+                if (other == player || !other.IsValid || other.PlayerPawn == null || !other.PlayerPawn.IsValid)
+                    continue;
+
+                var otherPawn = other.PlayerPawn.Value;
+                if (otherPawn == null || !otherPawn.IsValid || otherPawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+                    continue;
+
+                var pos1 = currentPawn.AbsOrigin;
+                var pos2 = otherPawn.AbsOrigin;
+                if (pos1 == null || pos2 == null)
+                    continue;
+
+                float dx = pos1.X - pos2.X;
+                float dy = pos1.Y - pos2.Y;
+                float dz = pos1.Z - pos2.Z;
+                float distance = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (distance <= 32.0f)
+                {
+                    canRestore = false;
+                    break;
+                }
+            }
+
+            if (canRestore)
+            {
+                // Restore collision
+                currentPawn.Collision.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_PLAYER;
+                currentPawn.Collision.CollisionAttribute.CollisionGroup = (byte)CollisionGroup.COLLISION_GROUP_PLAYER;
+                Utilities.SetStateChanged(currentPawn, "CCollisionProperty", "m_collisionAttribute");
+
+                // Clean up timer
+                if (_collisionTimers.TryGetValue(player, out var t2) && t2 != null)
+                {
+                    t2.Kill();
+                    _collisionTimers.Remove(player);
+                }
+            }
+            // If not canRestore, timer will fire again in 1 second (REPEAT)
+        }, TimerFlags.REPEAT);
+
+        _collisionTimers[player] = timer;
     }
 
     private static string VectorToString(Vector3 vec)
@@ -344,37 +408,5 @@ internal static class IsValid
         }
 
         return true;
-    }
-}
-
-
-
-// NOTE:
-//      This class was made by KillStr3aK / Bober repository and allows you to perform actions depending on whether the server is running a linux or windows operating system
-//      - https://github.com/KillStr3aK/CSSharpTests/blob/master/Models/WIN_LINUX.cs
-public class WIN_LINUX<T>
-{
-    [JsonPropertyName("Windows")]
-    public T Windows { get; private set; }
-
-    [JsonPropertyName("Linux")]
-    public T Linux { get; private set; }
-
-    public WIN_LINUX(T windows, T linux)
-    {
-        this.Windows = windows;
-        this.Linux = linux;
-    }
-
-    public T Get()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return this.Windows;
-        }
-        else
-        {
-            return this.Linux;
-        }
     }
 }
